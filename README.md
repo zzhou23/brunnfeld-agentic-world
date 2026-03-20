@@ -651,14 +651,15 @@ brunnfeld/
 │   ├── village-map.ts         # Locations · adjacency · opening hours
 │   ├── events.ts              # SSE EventEmitter
 │   ├── server.ts              # HTTP server · /api routes · static viewer
-│   ├── llm.ts                 # Claude API wrapper · streaming
+│   ├── llm.ts                 # OpenRouter + Claude CLI · streaming · <think> stripping
+│   ├── god-mode.ts            # God Mode events · agent interview · whisper
 │   ├── messages.ts            # send_message queuing
 │   ├── doors.ts               # lock / unlock / knock resolution
 │   └── tools-degradation.ts   # Tool wear tracking
 ├── viewer/                    # Web viewer (Vite + React + Canvas)
 │   └── src/
 │       ├── canvas/            # Pixel art renderer: map · agents · animations
-│       ├── components/        # Agent panel · Market panel · Economy panel · Feed
+│       ├── components/        # AgentPanel · MarketPanel · EconomyPanel · GodModePanel · Feed
 │       └── hooks/             # SSE connection · state management (Zustand)
 ├── data/
 │   ├── world_state.json       # Full simulation state (mutated every tick)
@@ -670,14 +671,63 @@ brunnfeld/
 
 ### Web Viewer API
 
-| Endpoint | Returns |
-|----------|---------|
-| `GET /api/state` | Full current world state |
-| `GET /api/ticks` | List of available tick log IDs |
-| `GET /api/tick/:id` | Single tick log (locations, trades, productions, movements) |
-| `GET /stream` | SSE stream of live simulation events |
+| Endpoint | Method | Returns |
+|----------|--------|---------|
+| `GET /api/state` | GET | Full current world state |
+| `GET /api/economy` | GET | Economy snapshots array |
+| `GET /api/marketplace` | GET | Current order book + price index |
+| `GET /api/trades` | GET | Full trade history |
+| `GET /api/prices` | GET | Current price index |
+| `GET /api/memories` | GET | All agent memory files |
+| `GET /api/profiles` | GET | All agent profile files |
+| `GET /api/ticks` | GET | List of available tick log IDs |
+| `GET /api/tick/:id` | GET | Single tick log (locations, trades, productions, movements) |
+| `GET /stream` | GET | SSE stream of live simulation events |
+| `POST /api/events/trigger` | POST | Inject a god mode event `{ eventType }` |
+| `POST /api/interview/:agent` | POST | Stream in-character agent response `{ question }` |
+| `POST /api/whisper/:agent` | POST | Queue a message to an agent `{ message }` |
 
-**SSE event types**: `tick`, `action`, `trade`, `production`, `economy`, `order`, `thinking`, `stream`, `event`
+**SSE event types**: `tick`, `action`, `trade`, `production`, `economy`, `order`, `thinking`, `stream`, `event`, `event_expired`
+
+---
+
+## God Mode & Agent Interview
+
+The viewer's **Events tab** lets you inject disruptions into the running simulation and watch the consequences ripple through the economy tick by tick.
+
+### God Mode Events
+
+| Event | Effect | Duration |
+|---|---|---|
+| 🌵 **Drought** | Farm yields halved | 3 sim days (48 ticks) |
+| 🐪 **Caravan** | Otto floods market with cheap goods at 70% price | 1 sim day (16 ticks) |
+| ⛏ **Mine Collapse** | Ore production blocked entirely | 2 sim days (32 ticks) |
+| 🌾 **Double Harvest** | Farm yields doubled | 1 sim day (16 ticks) |
+| ☠ **Plague Rumor** | Medicine demand surges, agents panic-buy | 2 sim days (32 ticks) |
+| 🗡 **Bandit Threat** | 5% per-tick theft risk for all agents | 2 sim days (32 ticks) |
+
+Events broadcast a message to affected agents via the message queue, so they respond in-character next tick. Active events are shown with a live countdown in the viewer.
+
+### Agent Interview
+
+Click any villager → scroll to **Interview** → ask them anything. The response streams live in character, grounded in their actual memory, inventory, wallet, and current village events.
+
+```
+"Hans, how are your crops?"
+→ "The wheat's been thin this week — drought hit us bad, and my tools
+   are near worn through. I've twenty coin left and Volker wants twelve
+   for a new set. I'll manage, God willing."
+```
+
+### Whisper
+
+Type a rumor into the **Whisper** field while an agent is selected. They receive it as a message next tick and may act on it — adjust prices, hoard goods, warn others.
+
+```
+"Whisper to Bertha: bread prices will triple by winter"
+→ Bertha receives: "A villager whispered: bread prices will triple by winter"
+→ Watch her next-tick behavior
+```
 
 ---
 
