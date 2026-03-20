@@ -535,7 +535,7 @@ None of this is instructed. These patterns emerged from structural constraints:
 ### Prerequisites
 
 - Node.js 18+
-- Anthropic API key
+- Either a Claude Code CLI installation **or** an OpenRouter API key
 
 ### Quick Start
 
@@ -544,11 +544,69 @@ git clone <repo>
 cd brunnfeld
 npm install
 cp .env.example .env
-# Add your ANTHROPIC_API_KEY to .env
+# Configure your LLM backend (see below)
 npm start
 ```
 
 The simulation starts at tick 1 (Spring, Monday 6am) and streams live to `http://localhost:3333`.
+
+---
+
+### LLM Backend
+
+Brunnfeld supports two backends. Pick one.
+
+#### Option A — Claude Code CLI (no API key needed)
+
+If you have [Claude Code](https://claude.ai/code) installed and authenticated, you're done. Leave `OPENROUTER_API_KEY` unset in `.env` and the simulation uses the `claude` CLI directly.
+
+```env
+# .env — CLI mode (default)
+CHARACTER_MODEL=haiku       # haiku · sonnet · opus
+INTERVIEW_MODEL=haiku
+```
+
+The CLI mode does **not** stream tokens live to the viewer — agent responses appear after the full turn completes.
+
+#### Option B — OpenRouter (live streaming)
+
+Set `OPENROUTER_API_KEY` and the simulation switches to OpenRouter automatically. Every agent token streams live to the viewer as it's generated.
+
+```env
+# .env — OpenRouter mode
+OPENROUTER_API_KEY=sk-or-...
+CHARACTER_MODEL=minimax/minimax-m2.5:free
+INTERVIEW_MODEL=minimax/minimax-m2.5:free
+```
+
+To use free models, go to [openrouter.ai/settings/privacy](https://openrouter.ai/settings/privacy) and enable:
+- **"Enable free endpoints that may train on inputs"**
+- **"Enable free endpoints that may publish prompts"**
+
+**Recommended OpenRouter models:**
+
+| Model | Input $/M | Output $/M | Notes |
+|---|---|---|---|
+| `minimax/minimax-m2.5:free` | $0 | $0 | Free — requires privacy opt-in above |
+| `minimax/minimax-m2.5` | $0.20 | $1.20 | Best value paid — ~$0.05/tick |
+| `minimax/minimax-m2.7` | $0.30 | $1.20 | Newest MiniMax, multi-agent focused |
+| `google/gemini-2.5-flash` | $0.30 | $2.50 | 1M context, fast |
+| `deepseek/deepseek-v3.2` | $0.26 | $0.38 | Extremely cheap, strong reasoning |
+| `meta-llama/llama-3.3-70b-instruct:free` | $0 | $0 | Free Llama — rate-limited at 20 req/min |
+| `anthropic/claude-haiku-4-5` | $1.00 | $5.00 | Original Haiku via OpenRouter |
+| `anthropic/claude-sonnet-4-6` | $3.00 | $15.00 | Best quality, highest cost |
+
+**Cost per tick** (45 agent calls, ~2K input / ~600 output tokens each):
+
+| Model | ~Cost/tick | ~Cost/sim week |
+|---|---|---|
+| Free models | $0 | $0 |
+| minimax-m2.5 | ~$0.05 | ~$5.60 |
+| deepseek-v3.2 | ~$0.03 | ~$3.00 |
+| claude-haiku-4-5 | ~$0.23 | ~$25 |
+| claude-sonnet-4-6 | ~$1.50 | ~$168 |
+
+---
 
 ### Commands
 
@@ -565,8 +623,10 @@ The simulation starts at tick 1 (Spring, Monday 6am) and streams live to `http:/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | (required) | Your Anthropic API key |
-| `CHARACTER_MODEL` | `haiku` | Model for agent turns. `haiku` ≈ $0.01/tick, `sonnet` ≈ $0.10/tick |
+| `OPENROUTER_API_KEY` | — | If set, enables OpenRouter backend with live streaming |
+| `CHARACTER_MODEL` | `haiku` | Model for village agents. Any OpenRouter model ID or `haiku`/`sonnet`/`opus` for CLI |
+| `INTERVIEW_MODEL` | `haiku` | Model for the agent interview endpoint |
+| `CLAUDE_CONCURRENCY` | `4` | Max parallel LLM calls |
 | `PORT` | `3333` | HTTP server port |
 
 ---
