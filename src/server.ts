@@ -257,6 +257,7 @@ const server = createServer(async (req, res) => {
         ["/assets/items/ore/",       join(ROOT, "Items-Assets/Ore & Gem")],
         ["/assets/items/tool/",      join(ROOT, "Items-Assets/Weapon & Tool")],
         ["/assets/items/misc/",      join(ROOT, "Items-Assets/Misc")],
+        ["/assets/merchant/",        join(ROOT, "Asset_Pack/merchant")],
       ];
       for (const [prefix, dir] of assetMap) {
         if (path.startsWith(prefix)) {

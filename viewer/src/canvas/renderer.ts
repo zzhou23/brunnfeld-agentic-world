@@ -18,6 +18,7 @@ const SPRITES = {
   pawnWood:    "/assets/units/Pawn/Pawn_Idle Wood.png",
   monkIdle:    "/assets/units/Monk/Idle.png",
   warriorIdle: "/assets/units/Warrior/Warrior_Idle.png",
+  merchantIdle: "/assets/merchant/Gipsy spritesheet.png",
 };
 
 // ─── Agent → sprite mapping ───────────────────────────────────────────────
@@ -145,6 +146,9 @@ export function renderVillage(
 
   // ── LAYER 2: Buildings ───────────────────────────────────────
   drawBuildings(ctx, hoveredLocation);
+
+  // ── LAYER 2b: Event overlays ─────────────────────────────────
+  if (world) drawEventOverlays(ctx, world);
 
   // ── LAYER 3: Agents ──────────────────────────────────────────
   if (world) {
@@ -452,6 +456,129 @@ function drawParticles(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = p.color;
     ctx.fillText(p.text, p.x, p.y);
     ctx.globalAlpha = 1;
+  }
+}
+
+// ─── God Mode event overlays ──────────────────────────────────────────────
+
+function drawEventOverlays(ctx: CanvasRenderingContext2D, world: WorldState): void {
+  const events = world.active_events;
+  if (events.length === 0) return;
+
+  const pulse = Math.sin(frameIndex * 0.05) * 0.5 + 0.5; // 0–1 slow pulse (~3s cycle at 60fps)
+
+  for (const ev of events) {
+    switch (ev.type) {
+
+      case "drought": {
+        for (const name of ["Farm 1", "Farm 2", "Farm 3"]) {
+          const tile = LOCATION_TILES[name];
+          if (!tile) continue;
+          const px = tile.tx * TILE_SIZE;
+          const py = tile.ty * TILE_SIZE;
+          ctx.fillStyle = "rgba(220,100,20,0.30)";
+          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+          // Parched earth crack lines
+          ctx.strokeStyle = "rgba(160,60,0,0.50)";
+          ctx.lineWidth = 1;
+          for (let dy = 6; dy < TILE_SIZE; dy += 10) {
+            ctx.beginPath();
+            ctx.moveTo(px + 2, py + dy);
+            ctx.lineTo(px + TILE_SIZE - 2, py + dy + 3);
+            ctx.stroke();
+          }
+        }
+        break;
+      }
+
+      case "double_harvest": {
+        const a = 0.15 + pulse * 0.20;
+        for (const name of ["Farm 1", "Farm 2", "Farm 3"]) {
+          const tile = LOCATION_TILES[name];
+          if (!tile) continue;
+          const px = tile.tx * TILE_SIZE;
+          const py = tile.ty * TILE_SIZE;
+          ctx.fillStyle = `rgba(255,220,60,${a})`;
+          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+          ctx.font = "14px serif";
+          ctx.textAlign = "center";
+          ctx.fillStyle = `rgba(255,200,0,${0.5 + pulse * 0.4})`;
+          ctx.fillText("✦", px + TILE_SIZE / 2, py + TILE_SIZE / 2 + 5);
+        }
+        break;
+      }
+
+      case "mine_collapse": {
+        const tile = LOCATION_TILES["Mine"];
+        if (!tile) break;
+        const px = tile.tx * TILE_SIZE;
+        const py = tile.ty * TILE_SIZE;
+        ctx.fillStyle = "rgba(180,40,20,0.40)";
+        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        // Red X over the mine entrance
+        ctx.strokeStyle = "rgba(220,30,30,0.75)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(px + 8,  py + 8);  ctx.lineTo(px + TILE_SIZE - 8, py + TILE_SIZE - 8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px + TILE_SIZE - 8, py + 8);  ctx.lineTo(px + 8, py + TILE_SIZE - 8);
+        ctx.stroke();
+        break;
+      }
+
+      case "caravan": {
+        const tile = LOCATION_TILES["Merchant Camp"];
+        if (!tile) break;
+        const px = tile.tx * TILE_SIZE;
+        const py = tile.ty * TILE_SIZE;
+
+        // Golden ground glow at the camp
+        ctx.fillStyle = `rgba(255,200,40,${0.15 + pulse * 0.18})`;
+        ctx.fillRect(px - 4, py - 4, TILE_SIZE + 8, TILE_SIZE + 8);
+
+        // Merchant NPC sprite (Gipsy spritesheet: 800×400, 10×5 frames = 80×80 each)
+        const MERCHANT_FRAME_W = 80;
+        const MERCHANT_FRAME_H = 80;
+        const MERCHANT_DISPLAY = 52;
+        const sheet = loadSprite(SPRITES.merchantIdle, MERCHANT_FRAME_W, MERCHANT_FRAME_H);
+        const animFrame = Math.floor(frameIndex / 8) % 10; // row 0: 10 idle frames with chest
+        const cx = px + TILE_SIZE / 2;
+        const cy = py + TILE_SIZE / 2 + 4;
+        if (sheet) {
+          drawSprite(ctx, sheet, animFrame, cx - MERCHANT_DISPLAY / 2, cy - MERCHANT_DISPLAY / 2, MERCHANT_DISPLAY, MERCHANT_DISPLAY);
+        } else {
+          // Fallback: golden circle
+          ctx.fillStyle = "#d4a020";
+          ctx.beginPath();
+          ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // "Merchant" label below sprite
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillText("Merchant", cx + 1, cy + MERCHANT_DISPLAY / 2 + 11);
+        ctx.fillStyle = "#f0c040";
+        ctx.fillText("Merchant", cx, cy + MERCHANT_DISPLAY / 2 + 10);
+        break;
+      }
+
+      case "plague_rumor": {
+        // Atmospheric purple fog over the entire map
+        ctx.fillStyle = "rgba(80,20,100,0.12)";
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+        break;
+      }
+
+      case "bandit_threat": {
+        // Ominous red tint over the entire map
+        ctx.fillStyle = `rgba(180,30,30,${0.06 + pulse * 0.04})`;
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+        break;
+      }
+    }
   }
 }
 

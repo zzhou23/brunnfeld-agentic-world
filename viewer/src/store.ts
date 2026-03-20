@@ -239,7 +239,7 @@ export const useVillageStore = create<VillageStore>((set, get) => ({
   },
 
   handleSSEEvent: (e: SSEEvent) => {
-    const { world, feed } = get();
+    const { world } = get();
 
     if (e.type === "init") {
       const fills: OrderFeedEntry[] = (e.state.marketplace.history ?? [])
@@ -327,7 +327,7 @@ export const useVillageStore = create<VillageStore>((set, get) => ({
         text: e.result ?? "",
         location: e.location,
       };
-      set({ feed: [entry, ...feed].slice(0, 300) });
+      set((s) => ({ feed: [entry, ...s.feed].slice(0, 300) }));
 
       if (e.location) {
         if (isMove && world) {
@@ -389,7 +389,7 @@ export const useVillageStore = create<VillageStore>((set, get) => ({
         price: e.pricePerUnit,
       };
       set((s) => ({
-        feed: [entry, ...feed].slice(0, 300),
+        feed: [entry, ...s.feed].slice(0, 300),
         orderFeed: [orderEntry, ...s.orderFeed].slice(0, 150),
         priceFlashes: { ...s.priceFlashes, [e.item]: { dir, at: Date.now() } },
       }));
@@ -404,7 +404,7 @@ export const useVillageStore = create<VillageStore>((set, get) => ({
         type: "production",
         text: `${AGENT_DISPLAY[e.agent]} produced ${e.qty}× ${e.item}`,
       };
-      set({ feed: [entry, ...feed].slice(0, 300) });
+      set((s) => ({ feed: [entry, ...s.feed].slice(0, 300) }));
       return;
     }
 
@@ -444,19 +444,19 @@ export const useVillageStore = create<VillageStore>((set, get) => ({
       };
       set((s) => ({
         feed: [entry, ...s.feed].slice(0, 300),
-        world: s.world && (e as { active_events?: unknown[] }).active_events
-          ? { ...s.world, active_events: (e as { active_events: import("./types").ActiveEvent[] }).active_events! }
+        world: s.world && e.active_events
+          ? { ...s.world, active_events: e.active_events }
           : s.world,
       }));
       return;
     }
 
     if (e.type === "event_expired") {
-      set((s) => ({
-        world: s.world
-          ? { ...s.world, active_events: s.world.active_events.filter(ev => ev.type !== (e as { eventType: string }).eventType) }
-          : s.world,
-      }));
+      set((s) => {
+        if (!s.world?.active_events.some(ev => ev.type === e.eventType)) return s;
+        return { world: { ...s.world!, active_events: s.world!.active_events.filter(ev => ev.type !== e.eventType) } };
+      });
+      return;
     }
   },
 }));

@@ -8,6 +8,7 @@ export const LOCATIONS = [
   "Healer's Hut",
   "Farm 1", "Farm 2", "Farm 3",
   "Forest", "Mine",
+  "Merchant Camp",
 ] as const;
 
 export type Location = (typeof LOCATIONS)[number];
@@ -15,7 +16,8 @@ export type Location = (typeof LOCATIONS)[number];
 // Adjacency: locations you can hear and move to directly in 1 tick.
 // Move to non-adjacent location costs 2 ticks (routed through Village Square).
 export const ADJACENCY: Record<string, string[]> = {
-  "Village Square":     ["Bakery", "Tavern", "Church", "Mill", "Forge", "Carpenter Shop", "Elder's House", "Cottage 1", "Farm 1"],
+  "Village Square":     ["Bakery", "Tavern", "Church", "Mill", "Forge", "Carpenter Shop", "Elder's House", "Cottage 1", "Farm 1", "Merchant Camp"],
+  "Merchant Camp":      ["Village Square"],
   "Bakery":             ["Village Square", "Mill"],
   "Tavern":             ["Village Square", "Elder's House"],
   "Church":             ["Village Square", "Elder's House"],
@@ -93,4 +95,5 @@ export const LOCATION_TILES: Record<string, { tx: number; ty: number }> = {
   "Farm 3":             { tx: 21, ty: 4  },
   "Forest":             { tx: 6,  ty: 1  },
   "Mine":               { tx: 28, ty: 1  },
+  "Merchant Camp":      { tx: 19, ty: 7  },
 };

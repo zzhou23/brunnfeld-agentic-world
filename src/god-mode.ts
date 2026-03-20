@@ -1,8 +1,8 @@
-import type { ActiveEvent, AgentName, EventType, ItemType, WorldState } from "./types.js";
+import type { ActiveEvent, AgentName, ItemType, WorldState } from "./types.js";
 import { readAgentProfile, readAgentMemory } from "./memory.js";
 import { AGENT_DISPLAY_NAMES, AGENT_NAMES } from "./types.js";
 import { queueMessage } from "./messages.js";
-import { addToInventory } from "./inventory.js";
+import { addToInventory, removeFromInventory, feedbackToAgent } from "./inventory.js";
 import { callClaude } from "./llm.js";
 import { emitSSE } from "./events.js";
 
@@ -11,6 +11,9 @@ import { emitSSE } from "./events.js";
 export const FARM_ITEMS = new Set<ItemType>([
   "wheat", "vegetables", "eggs", "milk", "meat", "herbs",
 ]);
+
+const FARMER_AGENTS: AgentName[] = ["hans", "ulrich", "bertram", "konrad", "heinrich"];
+const MINER_AGENTS: AgentName[] = ["dieter", "rupert"];
 
 // ─── Production multiplier ────────────────────────────────────
 
@@ -35,18 +38,16 @@ function cleanupCaravanStock(state: WorldState): void {
   for (const item of caravanItems) {
     const entry = ottoInv.items.find(i => i.type === item);
     if (entry) {
-      // Remove unsold caravan items (those not reserved)
       const unsold = entry.quantity - (entry.reserved ?? 0);
-      if (unsold > 0) entry.quantity -= unsold;
-      if (entry.quantity <= 0) {
-        ottoInv.items = ottoInv.items.filter(i => i.type !== item);
-      }
+      if (unsold > 0) removeFromInventory(ottoInv, item, unsold);
     }
   }
-  // Also cancel open sell orders from otto for caravan items
+  // Cancel open sell orders from otto for caravan items
   state.marketplace.orders = state.marketplace.orders.filter(
     o => !(o.agentId === "otto" && caravanItems.includes(o.item)),
   );
+  // Move otto back to the village square
+  state.agent_locations["otto"] = "Village Square";
 }
 
 // ─── Bandit theft ─────────────────────────────────────────────
@@ -78,34 +79,79 @@ function applyBanditTheft(state: WorldState, time: { tick: number }): void {
   }
 }
 
+// ─── Location-aware event feedback ───────────────────────────
+
+function injectLocationEventFeedback(state: WorldState, time: { tick: number }): void {
+  for (const ev of state.active_events) {
+    if (ev.startTick !== time.tick) continue; // only on the first tick of the event
+
+    const agentsAt = (loc: string): AgentName[] =>
+      AGENT_NAMES.filter(a => state.agent_locations[a] === loc);
+
+    switch (ev.type) {
+      case "drought":
+        for (const farm of ["Farm 1", "Farm 2", "Farm 3"]) {
+          for (const a of agentsAt(farm)) {
+            feedbackToAgent(a, state, "The fields are parched — drought has cut yields in half. Consider finding other work until it passes.");
+          }
+        }
+        break;
+      case "double_harvest":
+        for (const farm of ["Farm 1", "Farm 2", "Farm 3"]) {
+          for (const a of agentsAt(farm)) {
+            feedbackToAgent(a, state, "The fields are bursting with life! A miraculous double harvest — your yields are doubled today.");
+          }
+        }
+        break;
+      case "mine_collapse":
+        for (const a of agentsAt("Mine")) {
+          feedbackToAgent(a, state, "The mine just collapsed around you! Get out immediately and find other work while it is shored up.");
+        }
+        break;
+      case "caravan":
+        for (const a of agentsAt("Village Square")) {
+          feedbackToAgent(a, state, "A merchant caravan has arrived right here in the square! Cheap goods are available — spread the word.");
+        }
+        break;
+      // plague_rumor and bandit_threat already broadcast via queueMessage to all agents from trigger functions
+    }
+  }
+}
+
 // ─── Tick lifecycle ───────────────────────────────────────────
 
 export function tickGodModeEvents(state: WorldState, time: { tick: number }): void {
-  const expired = state.active_events.filter(e => e.endTick <= time.tick);
-  for (const ev of expired) {
-    if (ev.type === "caravan") cleanupCaravanStock(state);
-    emitSSE("event:expired", { eventType: ev.type });
+  if (state.active_events.length === 0) return;
+  const stillActive: ActiveEvent[] = [];
+  for (const ev of state.active_events) {
+    if (ev.endTick <= time.tick) {
+      if (ev.type === "caravan") cleanupCaravanStock(state);
+      emitSSE("event:expired", { eventType: ev.type });
+    } else {
+      stillActive.push(ev);
+    }
   }
-  state.active_events = state.active_events.filter(e => e.endTick > time.tick);
+  state.active_events = stillActive;
 
   if (state.active_events.some(e => e.type === "bandit_threat")) {
     applyBanditTheft(state, time);
   }
+
+  injectLocationEventFeedback(state, time);
 }
 
 // ─── Event triggers ───────────────────────────────────────────
 
 export function triggerDrought(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "drought" as EventType,
+    type: "drought",
     description: "A severe drought has struck Brunnfeld. Farm yields are halved.",
     startTick: tick,
     endTick: tick + 48,
   };
   state.active_events.push(ev);
 
-  const farmers: AgentName[] = ["hans", "ulrich", "bertram", "konrad", "heinrich"];
-  for (const a of farmers) {
+  for (const a of FARMER_AGENTS) {
     queueMessage(state, "otto", a, "The fields are parched. The drought will halve our harvest for the next three days.", tick);
   }
   return ev;
@@ -113,7 +159,7 @@ export function triggerDrought(state: WorldState, tick: number): ActiveEvent {
 
 export function triggerCaravan(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "caravan" as EventType,
+    type: "caravan",
     description: "A merchant caravan has arrived with cheap goods for one day.",
     startTick: tick,
     endTick: tick + 16,
@@ -152,20 +198,23 @@ export function triggerCaravan(state: WorldState, tick: number): ActiveEvent {
     });
   }
 
-  queueMessage(state, "otto", "liesel", "A caravan is in the square! Go tell the villagers of the cheap goods available today.", tick);
+  // Move otto to the merchant camp for the duration
+  state.agent_locations["otto"] = "Merchant Camp";
+
+  queueMessage(state, "otto", "liesel", "A merchant caravan has set up camp near the village square! Go tell the villagers of the cheap goods available today.", tick);
   return ev;
 }
 
 export function triggerMineCollapse(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "mine_collapse" as EventType,
+    type: "mine_collapse",
     description: "The mine has partially collapsed! Ore production is blocked for 2 days.",
     startTick: tick,
     endTick: tick + 32,
   };
   state.active_events.push(ev);
 
-  for (const miner of ["dieter", "rupert"] as AgentName[]) {
+  for (const miner of MINER_AGENTS) {
     queueMessage(state, "otto", miner, "The mine has collapsed! Do not attempt to enter until it is shored up. No ore extraction for two days.", tick);
   }
   return ev;
@@ -173,15 +222,14 @@ export function triggerMineCollapse(state: WorldState, tick: number): ActiveEven
 
 export function triggerDoubleHarvest(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "double_harvest" as EventType,
+    type: "double_harvest",
     description: "A miraculous double harvest — farm yields are doubled today!",
     startTick: tick,
     endTick: tick + 16,
   };
   state.active_events.push(ev);
 
-  const farmers: AgentName[] = ["hans", "ulrich", "bertram", "konrad", "heinrich"];
-  for (const a of farmers) {
+  for (const a of FARMER_AGENTS) {
     queueMessage(state, "otto", a, "God has blessed us with a bountiful harvest today! Your yields will be doubled.", tick);
   }
   return ev;
@@ -189,7 +237,7 @@ export function triggerDoubleHarvest(state: WorldState, tick: number): ActiveEve
 
 export function triggerPlagueRumor(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "plague_rumor" as EventType,
+    type: "plague_rumor",
     description: "Plague rumors spread through the village. Demand for medicine has surged.",
     startTick: tick,
     endTick: tick + 32,
@@ -204,7 +252,7 @@ export function triggerPlagueRumor(state: WorldState, tick: number): ActiveEvent
 
 export function triggerBanditThreat(state: WorldState, tick: number): ActiveEvent {
   const ev: ActiveEvent = {
-    type: "bandit_threat" as EventType,
+    type: "bandit_threat",
     description: "Bandits are reported nearby. There is a risk of theft for 2 days.",
     startTick: tick,
     endTick: tick + 32,

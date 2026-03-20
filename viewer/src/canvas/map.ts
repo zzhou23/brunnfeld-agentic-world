@@ -28,9 +28,11 @@ export const LOCATION_TILES: Record<string, { tx: number; ty: number }> = {
   "Farm 3":             { tx: 21, ty: 4  },
   "Forest":             { tx: 6,  ty: 1  },
   "Mine":               { tx: 28, ty: 1  },
+  "Merchant Camp":      { tx: 19, ty: 7  },
 };
 
 export const ADJACENCY: [string, string][] = [
+  ["Village Square", "Merchant Camp"],
   ["Village Square", "Bakery"],
   ["Village Square", "Tavern"],
   ["Village Square", "Church"],
@@ -87,6 +89,7 @@ export const LOCATION_BUILDINGS: Record<string, { img: string; w: number; h: num
   "Farm 3":             { img: "/assets/buildings/Archery.png", w: 100, h: 133, label: "Farm 3" },
   "Forest":             { img: "", w: 0, h: 0, label: "Forest" },
   "Mine":               { img: "/assets/buildings/Tower.png", w: 64, h: 128, label: "Mine" },
+  "Merchant Camp":      { img: "", w: 0, h: 0, label: "Merchant" },
 };
 
 export function tilePx(tile: { tx: number; ty: number }): { x: number; y: number } {

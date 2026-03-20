@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useVillageStore, AGENT_DISPLAY } from "../store";
 import type { AgentName, BodyState, Loan } from "../types";
 import { getItemIconUrl } from "../canvas/sprites";
@@ -92,13 +92,14 @@ function AgentList() {
     );
   }
 
-  const agents = (Object.keys(world.economics) as AgentName[]).slice().sort((a, b) => {
-    const bodyA = world.body[a];
-    const bodyB = world.body[b];
-    const sa = bodyA ? STATUS_ORDER[getStatusBucket(bodyA)] : 5;
-    const sb = bodyB ? STATUS_ORDER[getStatusBucket(bodyB)] : 5;
-    return sa !== sb ? sa - sb : (AGENT_DISPLAY[a] ?? a).localeCompare(AGENT_DISPLAY[b] ?? b);
-  });
+  const agents = useMemo(() =>
+    (Object.keys(world.economics) as AgentName[]).slice().sort((a, b) => {
+      const bodyA = world.body[a];
+      const bodyB = world.body[b];
+      const sa = bodyA ? STATUS_ORDER[getStatusBucket(bodyA)] : 5;
+      const sb = bodyB ? STATUS_ORDER[getStatusBucket(bodyB)] : 5;
+      return sa !== sb ? sa - sb : (AGENT_DISPLAY[a] ?? a).localeCompare(AGENT_DISPLAY[b] ?? b);
+    }), [world?.economics, world?.body]);
 
   return (
     <div style={{
@@ -207,12 +208,17 @@ export default function AgentPanel() {
   const [interviewing, setInterviewing] = useState(false);
   const [whisper, setWhisper]         = useState("");
   const [whispering, setWhispering]   = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setQuestion("");
     setAnswer("");
     setWhisper("");
   }, [selectedAgent]);
+
+  useEffect(() => {
+    if (answerRef.current) answerRef.current.scrollTop = answerRef.current.scrollHeight;
+  }, [answer]);
 
   async function askAgent() {
     if (!selectedAgent || !question.trim()) return;
@@ -229,7 +235,7 @@ export default function AgentPanel() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        setAnswer(prev => prev + dec.decode(value));
+        setAnswer(prev => prev + dec.decode(value, { stream: true }));
       }
     } finally {
       setInterviewing(false);
@@ -476,7 +482,7 @@ export default function AgentPanel() {
             {interviewing ? "…" : "Ask"}
           </button>
           {answer && (
-            <div style={{
+            <div ref={answerRef} style={{
               marginTop: 6, maxHeight: 140, overflowY: "auto",
               background: "rgba(30,18,5,0.9)", border: "1px solid #5a3c10",
               borderRadius: 4, padding: "6px 8px",
