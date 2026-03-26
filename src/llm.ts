@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ─── Concurrency semaphore ────────────────────────────────────
 
@@ -36,38 +36,74 @@ function estimateTokens(text: string): number {
 
 // ─── Model resolution ─────────────────────────────────────────
 
-// Short aliases → Claude Code CLI model IDs
-const CLI_MODEL_MAP: Record<string, string> = {
+const SDK_MODEL_MAP: Record<string, string> = {
   haiku:  "claude-haiku-4-5-20251001",
   sonnet: "claude-sonnet-4-6",
   opus:   "claude-opus-4-6",
 };
 
 // Short aliases → OpenRouter default model IDs (overridable via env)
-// Set OPENROUTER_MODEL to use one model for everything,
-// or OPENROUTER_MODEL_HAIKU / _SONNET / _OPUS for per-tier overrides.
-// Any full model ID (contains "/") is passed through as-is.
 function resolveOpenRouterModel(shortOrFull?: string): string {
   const global = process.env.OPENROUTER_MODEL;
   if (!shortOrFull) return global ?? "anthropic/claude-haiku-4-5-20251001";
 
-  // Already a full model ID
   if (shortOrFull.includes("/")) return shortOrFull;
 
-  // Per-tier env override
   const envKey = `OPENROUTER_MODEL_${shortOrFull.toUpperCase()}`;
   if (process.env[envKey]) return process.env[envKey]!;
 
-  // Global override (applies to all tiers unless per-tier is set)
   if (global) return global;
 
-  // Built-in defaults
   const defaults: Record<string, string> = {
     haiku:  "anthropic/claude-haiku-4-5-20251001",
     sonnet: "anthropic/claude-sonnet-4-6",
     opus:   "anthropic/claude-opus-4-6",
   };
   return defaults[shortOrFull] ?? shortOrFull;
+}
+
+// ─── Anthropic SDK backend ───────────────────────────────────
+
+const anthropicClient = new Anthropic({
+  apiKey: process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || "",
+  baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
+});
+
+async function callSDK(
+  prompt: string,
+  options?: { model?: string; onChunk?: (chunk: string) => void },
+): Promise<string> {
+  const modelId = options?.model
+    ? (SDK_MODEL_MAP[options.model] ?? options.model)
+    : SDK_MODEL_MAP.haiku!;
+
+  await acquireSlot();
+
+  try {
+    const stream = anthropicClient.messages.stream({
+      model: modelId,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    let fullText = "";
+
+    stream.on("text", (text) => {
+      fullText += text;
+      options?.onChunk?.(text);
+    });
+
+    await stream.finalMessage();
+
+    totalCalls++;
+    totalTokensEstimated += estimateTokens(prompt) + estimateTokens(fullText);
+
+    const result = fullText.trim();
+    if (!result) throw new Error("Empty response from Anthropic SDK");
+    return result;
+  } finally {
+    releaseSlot();
+  }
 }
 
 // ─── OpenRouter backend ───────────────────────────────────────
@@ -142,96 +178,6 @@ async function callOpenRouter(
   }
 }
 
-// ─── Claude Code CLI backend ──────────────────────────────────
-
-async function callCLI(
-  prompt: string,
-  options?: { model?: string; onChunk?: (chunk: string) => void },
-): Promise<string> {
-  const modelId = options?.model
-    ? (CLI_MODEL_MAP[options.model] ?? options.model)
-    : CLI_MODEL_MAP.haiku!;
-
-  await acquireSlot();
-
-  return new Promise((resolve, reject) => {
-    const args = [
-      "--print", prompt,
-      "--output-format", "stream-json",
-      "--verbose",
-      "--model", modelId,
-    ];
-
-    const proc = spawn("claude", args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
-
-    const timeout = setTimeout(() => {
-      proc.kill();
-      releaseSlot();
-      reject(new Error("claude CLI timed out after 45s"));
-    }, 45_000);
-
-    let fullText = "";
-    let stderr = "";
-    let buf = "";
-
-    proc.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
-
-    proc.stdout.on("data", (data: Buffer) => {
-      buf += data.toString();
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-
-          if (
-            event.type === "content_block_delta" &&
-            (event.delta as Record<string, unknown>)?.type === "text_delta"
-          ) {
-            const chunk = (event.delta as Record<string, unknown>).text as string;
-            fullText += chunk;
-            options?.onChunk?.(chunk);
-
-          } else if (event.type === "assistant") {
-            const msg = event.message as Record<string, unknown>;
-            const content = msg?.content as Array<Record<string, unknown>>;
-            for (const block of content ?? []) {
-              if (block.type === "text") {
-                const chunk = block.text as string;
-                if (!fullText.includes(chunk)) {
-                  fullText += chunk;
-                  options?.onChunk?.(chunk);
-                }
-              }
-            }
-
-          } else if (event.type === "result" && !fullText && event.result) {
-            fullText = event.result as string;
-          }
-        } catch { /* non-JSON line */ }
-      }
-    });
-
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      releaseSlot();
-      totalCalls++;
-      totalTokensEstimated += estimateTokens(prompt) + estimateTokens(fullText);
-      if (code !== 0) {
-        reject(new Error(`claude CLI exited with code ${code}: ${stderr.trim()}`));
-      } else {
-        const result = fullText.trim();
-        if (!result) reject(new Error("Empty response from claude CLI"));
-        else resolve(result);
-      }
-    });
-
-    proc.on("error", (err) => { clearTimeout(timeout); releaseSlot(); reject(err); });
-  });
-}
-
 // ─── Public API ───────────────────────────────────────────────
 
 export function usingOpenRouter(): boolean {
@@ -244,7 +190,7 @@ export async function callClaude(
 ): Promise<string> {
   return usingOpenRouter()
     ? callOpenRouter(prompt, options)
-    : callCLI(prompt, options);
+    : callSDK(prompt, options);
 }
 
 // Strip <think>...</think> blocks (MiniMax M2.x, DeepSeek R1, etc.)
